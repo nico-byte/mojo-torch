@@ -1,0 +1,24 @@
+from tensor import Tensor
+
+
+fn relu(x: Tensor) -> Tensor:
+    """ReLU activation: max(0, x)."""
+    var output = Tensor(x.shape)
+    for i in range(x.size):
+        var val = x.data.load(i)
+        if val > 0:
+            output.data.store(i, val)
+        else:
+            output.data.store(i, 0.0)
+    return output^
+
+fn relu_backward(output: Tensor, grad_output: Tensor) -> Tensor:
+    """ReLU backward: gradient = grad_output if output > 0 else 0."""
+    var grad_input = Tensor(grad_output.shape)
+    for i in range(grad_output.size):
+        var out_val = output.data.load(i)
+        if out_val > 0:
+            grad_input.data.store(i, grad_output.data.load(i))
+        else:
+            grad_input.data.store(i, 0.0)
+    return grad_input^
