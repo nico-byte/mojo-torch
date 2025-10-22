@@ -7,6 +7,7 @@ from tensor import Tensor
 
 struct Linear:
     """Linear (Fully Connected) Layer: y = xW^T + b."""
+
     var in_features: Int
     var out_features: Int
     var weight: Tensor
@@ -21,7 +22,7 @@ struct Linear:
         self.weight = Tensor(out_features, in_features)
         randn(self.weight.data, out_features * in_features)
         self.weight = self.weight * Float32(xavier_bound)
-        
+
         # Initialize bias to zeros
         if bias:
             self.bias = Tensor(1, out_features)
@@ -32,7 +33,7 @@ struct Linear:
     fn forward(self, input: Tensor) -> Tensor:
         """Forward pass: output = input @ weight.T + bias."""
         var batch_size = input.shape[0]
-        
+
         # Matrix multiplication: [batch, in] @ [out, in].T = [batch, out]
         output = input @ self.weight.T()
 
@@ -41,7 +42,9 @@ struct Linear:
 
         return output^
 
-    fn backward(self, input: Tensor, grad_output: Tensor, lr: Float32) -> Tuple[Tensor, Tensor, Tensor]:
+    fn backward(
+        self, input: Tensor, grad_output: Tensor, lr: Float32
+    ) -> Tuple[Tensor, Tensor, Tensor]:
         """Complete backward pass for linear layer."""
         var batch_size = input.shape[0]
 
@@ -61,6 +64,12 @@ struct Linear:
             grad_bias[0, j] = sum
 
         return grad_input^, grad_weight^, grad_bias^
-    
+
     fn __str__(self) -> String:
-        return "Linear(" + String(self.in_features) + ", " + String(self.out_features) + ")"
+        return (
+            "Linear("
+            + String(self.in_features)
+            + ", "
+            + String(self.out_features)
+            + ")"
+        )

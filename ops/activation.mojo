@@ -12,6 +12,7 @@ fn relu(x: Tensor) -> Tensor:
             output.data.store(i, 0.0)
     return output^
 
+
 fn relu_backward(output: Tensor, grad_output: Tensor) -> Tensor:
     """ReLU backward: gradient = grad_output if output > 0 else 0."""
     var grad_input = Tensor(grad_output.shape)
