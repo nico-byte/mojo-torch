@@ -2,7 +2,7 @@ from random import rand, randn
 from math import sqrt
 from memory import memset_zero
 from memory.unsafe_pointer import UnsafePointer
-from tensor import Tensor
+from mojo_torch import Tensor
 
 
 struct Linear:

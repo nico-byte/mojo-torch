@@ -1,9 +1,9 @@
-from tensor.tensor import Tensor
+from mojo_torch import Tensor
 from collections.list import List
 from math import sqrt
 
 
-fn matmul(input: Tensor, other: Tensor) -> Tensor:
+fn matmul(input: Tensor, other: Tensor, tiled: Bool = False) -> Tensor:
     """
     Matrix product of two tensors following PyTorch's torch.matmul behavior.
 
@@ -27,7 +27,10 @@ fn matmul(input: Tensor, other: Tensor) -> Tensor:
 
     # Case 2: Both tensors are 2-dimensional (matrix-matrix product)
     elif input_ndim == 2 and other_ndim == 2:
-        return input.__matmul_tiled__(other)
+        if tiled:
+            return input.__matmul_tiled__(other)
+        else:
+            return input.__matmul__(other)
 
     # Case 3: First is 1D, second is 2D (prepend 1 to first, then remove)
     elif input_ndim == 1 and other_ndim == 2:
@@ -46,19 +49,16 @@ fn _dot_product(input: Tensor, other: Tensor) -> Tensor:
     """Compute dot product of two 1D tensors."""
     if input.shape[0] != other.shape[0]:
         print("Dot product requires tensors of same length")
-        return Tensor([1], 0.0)  # Return scalar tensor with 0
+        return Tensor.scalar(0.0)  # Return scalar tensor with 0
 
-    var result = Tensor([1], 0.0)  # Scalar tensor
     var sum_val: Float32 = 0.0
-
     for i in range(input.shape[0]):
         sum_val += input.data.load(i) * other.data.load(i)
 
-    result.data.store(0, sum_val)
-    return result^
+    return Tensor.scalar(sum_val)
 
 
-fn _matmul_1d_2d(input: Tensor, other: Tensor) -> Tensor:
+fn _matmul_1d_2d(input: Tensor, other: Tensor, tiled: Bool = False) -> Tensor:
     """
     Matrix multiply where first tensor is 1D and second is 2D.
     Prepends 1 to first tensor's dimension, performs matmul, then removes prepended dimension.
@@ -82,7 +82,11 @@ fn _matmul_1d_2d(input: Tensor, other: Tensor) -> Tensor:
         temp_input[0, i] = input.data.load(i)
 
     # Perform matrix multiplication [1, n] @ [m, p] -> [1, p]
-    var temp_result = temp_input.__matmul_tiled__(other)
+    var temp_result: Tensor
+    if tiled:
+        temp_result = temp_input.__matmul_tiled__(other)
+    else:
+        temp_result = temp_input.__matmul__(other)
 
     # Remove the prepended dimension to get [p]
     var result = Tensor(p)
@@ -120,7 +124,7 @@ fn _matmul_2d_1d(input: Tensor, other: Tensor) -> Tensor:
     return result^
 
 
-fn _batched_matmul(input: Tensor, other: Tensor) -> Tensor:
+fn _batched_matmul(input: Tensor, other: Tensor, tiled: Bool = False) -> Tensor:
     """
     Batched matrix multiplication with broadcasting support.
     Handles N-dimensional tensors where N > 2.
@@ -197,7 +201,11 @@ fn _batched_matmul(input: Tensor, other: Tensor) -> Tensor:
         var other_batch = _extract_batch_matrix(
             other_promoted, batch_idx, broadcast_shape
         )
-        var batch_result = input_batch.__matmul_tiled__(other_batch)
+        var batch_result: Tensor
+        if tiled:
+            batch_result = input_batch.__matmul_tiled__(other_batch)
+        else:
+            batch_result = input_batch.__matmul__(other_batch)
         _store_batch_result(result, batch_result, batch_idx, broadcast_shape)
 
     # Remove dimensions that were added for 1D tensors

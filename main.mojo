@@ -1,6 +1,5 @@
-from tensor import Tensor
-from ops.matmul import matmul
-from nn.linear import Linear
+from mojo_torch import Tensor, matmul
+from mojo_torch import nn
 from time import perf_counter_ns
 
 
@@ -32,13 +31,15 @@ fn main():
     )
 
     start = perf_counter_ns()
-    var _ = matmul(a, b)  # Uses pure SIMD
+    var _ = matmul(a, b, tiled=True)  # pytorch like
     end = perf_counter_ns()
     print(
-        "Time taken for matmul (SIMD): ", (end - start) / 1e6, " milliseconds"
+        "Time taken for matmul (pytorch like): ",
+        (end - start) / 1e6,
+        " milliseconds",
     )
 
-    linear_layer = Linear(512, 256, True)
+    linear_layer = nn.Linear(512, 256, True)
     var input = Tensor(12, 512)  # Batch size of 12
     var output = linear_layer.forward(input)
     var grads = linear_layer.backward(input, output, 0.01)

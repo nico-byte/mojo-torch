@@ -1,88 +1,11 @@
-from tensor.tensor import Tensor
-from ops.matmul import matmul
+from mojo_torch import Tensor, matmul
+from test.utils.test_results import TensorTestResults
 from python import Python, PythonObject
 
 
-fn abs_f32(x: Float32) -> Float32:
-    return x if x >= 0 else -x
-
-
-struct TestResults:
-    var passed: Int
-    var failed: Int
-    var total: Int
-
-    fn __init__(out self):
-        self.passed = 0
-        self.failed = 0
-        self.total = 0
-
-    fn assert_equal(
-        mut self,
-        actual: Float32,
-        expected: Float32,
-        test_name: String,
-        tolerance: Float32 = 1e-6,
-    ):
-        self.total += 1
-        if abs_f32(actual - expected) < tolerance:
-            self.passed += 1
-            print("✓ PASS:", test_name)
-        else:
-            self.failed += 1
-            print("✗ FAIL:", test_name, "- Expected:", expected, "Got:", actual)
-
-    fn assert_shape_equal(
-        mut self,
-        actual_shape: List[Int],
-        expected_shape: List[Int],
-        test_name: String,
-    ):
-        self.total += 1
-        var shapes_match = True
-
-        if actual_shape.__len__() != expected_shape.__len__():
-            shapes_match = False
-        else:
-            for i in range(actual_shape.__len__()):
-                if actual_shape[i] != expected_shape[i]:
-                    shapes_match = False
-                    break
-
-        if shapes_match:
-            self.passed += 1
-            print("✓ PASS:", test_name)
-        else:
-            self.failed += 1
-            print("✗ FAIL:", test_name, "- Shape mismatch")
-            print("  Expected: [", end="")
-            for i in range(expected_shape.__len__()):
-                print(expected_shape[i], end="")
-                if i < expected_shape.__len__() - 1:
-                    print(", ", end="")
-            print("]")
-            print("  Got: [", end="")
-            for i in range(actual_shape.__len__()):
-                print(actual_shape[i], end="")
-                if i < actual_shape.__len__() - 1:
-                    print(", ", end="")
-            print("]")
-
-    fn print_summary(self):
-        print("\n" + "=" * 50)
-        print("TEST SUMMARY")
-        print("=" * 50)
-        print("Total tests:", self.total)
-        print("Passed:", self.passed)
-        print("Failed:", self.failed)
-        if self.failed == 0:
-            print("All tests passed!")
-        else:
-            print("Some tests failed. Please check the details above.")
-        print("=" * 50)
-
-
-fn test_1d_x_1d_dot_product(mut results: TestResults) raises:
+fn test_1d_x_1d_dot_product(
+    mut results: TensorTestResults, tiled: Bool = False
+) raises:
     print("\nTest 1: 1D x 1D (dot product)")
 
     # Mojo implementation
@@ -95,24 +18,30 @@ fn test_1d_x_1d_dot_product(mut results: TestResults) raises:
     b[1] = 5.0
     b[2] = 6.0
 
-    var result = matmul(a, b)
+    var result = matmul(a, b, tiled)
 
     # PyTorch reference
     var torch = Python.import_module("torch")
     var torch_a = torch.tensor([1.0, 2.0, 3.0])
     var torch_b = torch.tensor([4.0, 5.0, 6.0])
     var torch_result = torch.matmul(torch_a, torch_b)
+    print(torch_result)
 
-    # Assertions
-    var expected_shape = List[Int](1)
-    results.assert_shape_equal(result.shape, expected_shape, "1D x 1D shape")
+    # Assertions - dot product results in a scalar stored in a 1D tensor with 1 element
+    var expected_shape = List[Int]()
+    for i in range(torch_result.shape.__len__()):
+        expected_shape.append(Int(torch_result.shape[i]))
+    results.assert_shape_equal(
+        result.shape, expected_shape, "1D x 1D shape (scalar in tensor)"
+    )
     results.assert_equal(
         result[0], Float32(torch_result.item()), "1D x 1D value"
     )
-    results.assert_equal(result[0], 32.0, "1D x 1D manual calculation")
 
 
-fn test_2d_x_2d_matrix_multiply(mut results: TestResults) raises:
+fn test_2d_x_2d_matrix_multiply(
+    mut results: TensorTestResults, tiled: Bool = False
+) raises:
     print("\nTest 2: 2D x 2D (matrix multiplication)")
 
     # Mojo implementation
@@ -135,7 +64,7 @@ fn test_2d_x_2d_matrix_multiply(mut results: TestResults) raises:
     d[2, 0] = 11.0
     d[2, 1] = 12.0
 
-    var result = matmul(c, d)
+    var result = matmul(c, d, tiled)
 
     # PyTorch reference
     var torch = Python.import_module("torch")
@@ -150,7 +79,9 @@ fn test_2d_x_2d_matrix_multiply(mut results: TestResults) raises:
     var torch_result = torch.matmul(torch_c, torch_d)
 
     # Assertions
-    var expected_shape = List[Int](2, 2)
+    var expected_shape = List[Int]()
+    for i in range(torch_result.shape.__len__()):
+        expected_shape.append(Int(torch_result.shape[i]))
     results.assert_shape_equal(result.shape, expected_shape, "2D x 2D shape")
     results.assert_equal(
         result[0, 0], Float32(torch_result[0, 0].item()), "2D x 2D [0,0]"
@@ -165,16 +96,10 @@ fn test_2d_x_2d_matrix_multiply(mut results: TestResults) raises:
         result[1, 1], Float32(torch_result[1, 1].item()), "2D x 2D [1,1]"
     )
 
-    # Manual calculations
-    results.assert_equal(
-        result[0, 0], 58.0, "2D x 2D [0,0] manual: 1*7 + 2*9 + 3*11"
-    )
-    results.assert_equal(
-        result[0, 1], 64.0, "2D x 2D [0,1] manual: 1*8 + 2*10 + 3*12"
-    )
 
-
-fn test_1d_x_2d_broadcast(mut results: TestResults) raises:
+fn test_1d_x_2d_broadcast(
+    mut results: TensorTestResults, tiled: Bool = False
+) raises:
     print("\nTest 3: 1D x 2D (broadcast)")
 
     # Mojo implementation
@@ -191,7 +116,7 @@ fn test_1d_x_2d_broadcast(mut results: TestResults) raises:
     d[2, 0] = 11.0
     d[2, 1] = 12.0
 
-    var result = matmul(e, d)
+    var result = matmul(e, d, tiled)
 
     # PyTorch reference
     var torch = Python.import_module("torch")
@@ -203,7 +128,9 @@ fn test_1d_x_2d_broadcast(mut results: TestResults) raises:
     var torch_result = torch.matmul(torch_e, torch_d)
 
     # Assertions
-    var expected_shape = List[Int](2)
+    var expected_shape = List[Int]()
+    for i in range(torch_result.shape.__len__()):
+        expected_shape.append(Int(torch_result.shape[i]))
     results.assert_shape_equal(result.shape, expected_shape, "1D x 2D shape")
     results.assert_equal(
         result[0], Float32(torch_result[0].item()), "1D x 2D [0]"
@@ -213,7 +140,9 @@ fn test_1d_x_2d_broadcast(mut results: TestResults) raises:
     )
 
 
-fn test_2d_x_1d_matvec(mut results: TestResults) raises:
+fn test_2d_x_1d_matvec(
+    mut results: TensorTestResults, tiled: Bool = False
+) raises:
     print("\nTest 4: 2D x 1D (matrix-vector)")
 
     # Mojo implementation
@@ -230,7 +159,7 @@ fn test_2d_x_1d_matvec(mut results: TestResults) raises:
     f[1] = 2.0
     f[2] = 3.0
 
-    var result = matmul(c, f)
+    var result = matmul(c, f, tiled)
 
     # PyTorch reference
     var torch = Python.import_module("torch")
@@ -242,7 +171,9 @@ fn test_2d_x_1d_matvec(mut results: TestResults) raises:
     var torch_result = torch.matmul(torch_c, torch_f)
 
     # Assertions
-    var expected_shape = List[Int](2)
+    var expected_shape = List[Int]()
+    for i in range(torch_result.shape.__len__()):
+        expected_shape.append(Int(torch_result.shape[i]))
     results.assert_shape_equal(result.shape, expected_shape, "2D x 1D shape")
     results.assert_equal(
         result[0], Float32(torch_result[0].item()), "2D x 1D [0]"
@@ -251,12 +182,10 @@ fn test_2d_x_1d_matvec(mut results: TestResults) raises:
         result[1], Float32(torch_result[1].item()), "2D x 1D [1]"
     )
 
-    # Manual calculations
-    results.assert_equal(result[0], 14.0, "2D x 1D [0] manual: 1*1 + 2*2 + 3*3")
-    results.assert_equal(result[1], 32.0, "2D x 1D [1] manual: 4*1 + 5*2 + 6*3")
 
-
-fn test_3d_x_2d_batched(mut results: TestResults) raises:
+fn test_3d_x_2d_batched(
+    mut results: TensorTestResults, tiled: Bool = False
+) raises:
     print("\nTest 5: 3D x 2D (batched)")
 
     # Mojo implementation
@@ -273,7 +202,7 @@ fn test_3d_x_2d_batched(mut results: TestResults) raises:
         for j in range(2):
             h[i, j] = Float32(i * j)
 
-    var result = matmul(g, h)
+    var result = matmul(g, h, tiled)
 
     # PyTorch reference
     var torch = Python.import_module("torch")
@@ -292,7 +221,9 @@ fn test_3d_x_2d_batched(mut results: TestResults) raises:
     var torch_result = torch.matmul(torch_g, torch_h)
 
     # Assertions
-    var expected_shape = List[Int](2, 3, 2)
+    var expected_shape = List[Int]()
+    for i in range(torch_result.shape.__len__()):
+        expected_shape.append(Int(torch_result.shape[i]))
     results.assert_shape_equal(result.shape, expected_shape, "3D x 2D shape")
     results.assert_equal(
         result[0, 0, 0],
@@ -325,20 +256,9 @@ fn test_3d_x_2d_batched(mut results: TestResults) raises:
         "3D x 2D [1,2,1]",
     )
 
-    # Manual calculations
-    results.assert_equal(
-        result[0, 0, 0], 0.0, "3D x 2D [0,0,0] manual: 0*0 + 1*0 + 2*0 + 3*0"
-    )
-    results.assert_equal(
-        result[0, 0, 1], 14.0, "3D x 2D [0,0,1] manual: 0*0 + 1*1 + 2*2 + 3*3"
-    )
-    results.assert_equal(
-        result[1, 0, 1], 20.0, "3D x 2D [1,0,1] manual: 1*0 + 2*1 + 3*2 + 4*3"
-    )
-
 
 fn matmul_test() raises:
-    var results = TestResults()
+    var results = TensorTestResults()
 
     # Run all tests
     test_1d_x_1d_dot_product(results)
@@ -349,3 +269,38 @@ fn matmul_test() raises:
 
     # Print final results
     results.print_summary()
+
+    # Raise an error if any tests failed
+    if results.failed > 0:
+        raise Error(
+            "Test suite failed: "
+            + String(results.failed)
+            + " out of "
+            + String(results.total)
+            + " tests failed"
+        )
+
+
+fn tiled_matmul_test() raises:
+    var results = TensorTestResults()
+
+    # TODO: Currently unpacking of **kwargs is not supported, so we pass tiled=True explicitly to every matmul call
+    # Run all tests
+    test_1d_x_1d_dot_product(results, tiled=True)
+    test_2d_x_2d_matrix_multiply(results, tiled=True)
+    test_1d_x_2d_broadcast(results, tiled=True)
+    test_2d_x_1d_matvec(results, tiled=True)
+    test_3d_x_2d_batched(results, tiled=True)
+
+    # Print final results
+    results.print_summary()
+
+    # Raise an error if any tests failed
+    if results.failed > 0:
+        raise Error(
+            "Test suite failed: "
+            + String(results.failed)
+            + " out of "
+            + String(results.total)
+            + " tests failed"
+        )

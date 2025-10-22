@@ -1,4 +1,4 @@
-from tensor import Tensor
+from mojo_torch import Tensor
 
 
 fn relu(x: Tensor) -> Tensor:

@@ -28,6 +28,9 @@ struct Tensor(Copyable, ImplicitlyCopyable, Movable):
         for dim in dims:
             self.shape.append(dim)
             self.size *= dim
+        # For scalar (no dimensions), size should be 1
+        if dims.__len__() == 0:
+            self.size = 1
         self.data = UnsafePointer[Scalar[type]].alloc(self.size)
         memset_zero(self.data, self.size)
         self.strides = self._compute_strides()
@@ -103,8 +106,19 @@ struct Tensor(Copyable, ImplicitlyCopyable, Movable):
             print("Failed to create Tensor from numpy array")
             return Self()
 
+    @staticmethod
+    fn scalar(value: Float32) -> Self:
+        """Create a scalar tensor with empty shape."""
+        var tensor = Self()  # No dimensions = scalar
+        tensor.data.store(0, value)
+        return tensor^
+
     fn _compute_strides(self) -> List[Int]:
         """Compute strides based on shape for row-major order."""
+        # For scalar tensors (empty shape), return empty strides
+        if self.shape.__len__() == 0:
+            return List[Int]()
+
         var strides = List[Int]()
         var stride = 1
         for i in range(self.shape.__len__() - 1, -1, -1):
@@ -119,6 +133,9 @@ struct Tensor(Copyable, ImplicitlyCopyable, Movable):
 
     fn _flat_index(self, indices: VariadicList[Int]) -> Int:
         """Convert multi-dimensional indices to flat index."""
+        # For scalar tensors, always return index 0
+        if self.shape.__len__() == 0:
+            return 0
         var idx = 0
         for i in range(indices.__len__()):
             idx += indices[i] * self.strides[i]
@@ -247,9 +264,8 @@ struct Tensor(Copyable, ImplicitlyCopyable, Movable):
 
     fn __matmul__(self, rhs: Tensor) -> Tensor:
         """
-        Optimized matrix multiplication supporting 2D and 3D tensors.
+        Optimized matrix multiplication supporting 2D tensors.
         2D: [m, k] @ [k, n] -> [m, n].
-        3D: [batch, m, k] @ [batch, k, n] -> [batch, m, n].
         """
         if self.shape.__len__() == 2 and rhs.shape.__len__() == 2:
             # 2D matrix multiplication
@@ -270,7 +286,7 @@ struct Tensor(Copyable, ImplicitlyCopyable, Movable):
             var C: Tensor = Tensor(m, p)
 
             @parameter
-            fn calc_row_2d(row: Int):
+            fn calc_row(row: Int):
                 for col_block in range(0, p, nelts * 4):
                     for k_val in range(k):
 
@@ -289,70 +305,15 @@ struct Tensor(Copyable, ImplicitlyCopyable, Movable):
 
                         vectorize[dot, nelts](min(nelts * 4, p - col_block))
 
-            parallelize[calc_row_2d](m, m)
+            parallelize[calc_row](m, m)
             return C^
-
-        elif self.shape.__len__() == 3 and rhs.shape.__len__() == 3:
-            # 3D batch matrix multiplication
-            var batch = self.shape[0]
-            var m = self.shape[1]
-            var k = self.shape[2]
-            var n = rhs.shape[1]
-            var p = rhs.shape[2]
-
-            if k != n:
-                print(
-                    "MatMul not possible -> self.cols: "
-                    + String(k)
-                    + " != rhs.rows: "
-                    + String(n)
-                )
-                return Tensor(0)
-
-            var C: Tensor = Tensor(batch, m, p)
-
-            @parameter
-            fn calc_batch(b: Int):
-                @parameter
-                fn calc_row_3d(row: Int):
-                    var self_offset = b * m * k
-                    var rhs_offset = b * n * p
-                    var c_offset = b * m * p
-
-                    for col_block in range(0, p, nelts * 4):
-                        for k_val in range(k):
-
-                            @parameter
-                            fn dot[nelts_inner: Int](col: Int):
-                                var c_val = C.data.load[width=nelts_inner](
-                                    c_offset + row * p + col + col_block
-                                )
-                                var a_val = self.data.load(
-                                    self_offset + row * k + k_val
-                                )
-                                var b_val = rhs.data.load[width=nelts_inner](
-                                    rhs_offset + k_val * p + col + col_block
-                                )
-                                C.data.store[width=nelts_inner](
-                                    c_offset + row * p + col + col_block,
-                                    c_val + a_val * b_val,
-                                )
-
-                            vectorize[dot, nelts](min(nelts * 4, p - col_block))
-
-                parallelize[calc_row_3d](m, m)
-
-            parallelize[calc_batch](batch, batch)
-            return C^
-
         else:
-            print("MatMul only supported for 2D and 3D tensors")
+            print("MatMul only supported for 2D tensors (matrices)")
             return Tensor(0)
 
     fn __matmul_tiled__(self, rhs: Tensor) -> Tensor:
         """
         Tiled matrix multiplication with register accumulation.
-        Supports 2D and 3D tensors. Best for large matrices (>256x256).
         """
         if self.shape.__len__() == 2 and rhs.shape.__len__() == 2:
             var m = self.shape[0]
@@ -371,11 +332,11 @@ struct Tensor(Copyable, ImplicitlyCopyable, Movable):
 
             var C: Tensor = Tensor(m, p)
 
-            alias tile_i = 4
-            alias tile_j = nelts * 4
+            alias tile_i = 64
+            alias tile_j = nelts * 64
 
             @parameter
-            fn calc_tile_2d(jo: Int, io: Int):
+            fn calc_tile(jo: Int, io: Int):
                 var accumulators = stack_allocation[
                     tile_i * tile_j, Scalar[type]
                 ]()
@@ -386,26 +347,28 @@ struct Tensor(Copyable, ImplicitlyCopyable, Movable):
                 for k_val in range(k):
 
                     @parameter
-                    fn calc_tile_row_2d(i: Int):
+                    fn calc_tile_row(i: Int):
                         @parameter
-                        fn calc_tile_cols_2d[nelts_inner: Int](j: Int):
+                        fn calc_tile_cols[nelts_inner: Int](j: Int):
                             var idx = i * tile_j + j
                             var a_val = self.data.load((io + i) * k + k_val)
                             var b_val = rhs.data.load[width=nelts_inner](
                                 k_val * p + jo + j
                             )
-                            var acc = accumulators[idx]
-                            accumulators[idx] = acc + a_val * b_val[0]
+                            var acc = accumulators.load[width=nelts_inner](idx)
+                            accumulators.store[width=nelts_inner](
+                                idx, acc + a_val * b_val
+                            )
 
-                        vectorize[calc_tile_cols_2d, nelts](tile_j)
+                        vectorize[calc_tile_cols, nelts](tile_j)
 
                     @parameter
-                    fn unroll_rows_2d():
+                    fn unroll_rows():
                         @parameter
                         for i in range(tile_i):
-                            calc_tile_row_2d(i)
+                            calc_tile_row(i)
 
-                    unroll_rows_2d()
+                    unroll_rows()
 
                 for i in range(tile_i):
                     for j in range(tile_j):
@@ -416,99 +379,15 @@ struct Tensor(Copyable, ImplicitlyCopyable, Movable):
                             )
 
             @parameter
-            fn tile_parallel_rows_2d(yo: Int):
+            fn tile_parallel_rows(yo: Int):
                 var y = tile_i * yo
                 for x in range(0, p, tile_j):
-                    calc_tile_2d(x, y)
+                    calc_tile(x, y)
 
-            parallelize[tile_parallel_rows_2d]((m + tile_i - 1) // tile_i, m)
+            parallelize[tile_parallel_rows]((m + tile_i - 1) // tile_i, m)
             return C^
-
-        elif self.shape.__len__() == 3 and rhs.shape.__len__() == 3:
-            var batch = self.shape[0]
-            var m = self.shape[1]
-            var k = self.shape[2]
-            var n = rhs.shape[1]
-            var p = rhs.shape[2]
-
-            if k != n:
-                print(
-                    "MatMul not possible -> self.cols: "
-                    + String(k)
-                    + " != rhs.rows: "
-                    + String(n)
-                )
-                return Tensor(0)
-
-            var C: Tensor = Tensor(batch, m, p)
-
-            alias tile_i = 4
-            alias tile_j = nelts * 4
-
-            @parameter
-            fn calc_batch(b: Int):
-                var self_base = b * m * k
-                var rhs_base = b * n * p
-                var c_base = b * m * p
-
-                @parameter
-                fn calc_tile_3d(jo: Int, io: Int):
-                    var accumulators = stack_allocation[
-                        tile_i * tile_j, Scalar[type]
-                    ]()
-
-                    for i in range(tile_i * tile_j):
-                        accumulators[i] = Scalar[type](0)
-
-                    for k_val in range(k):
-
-                        @parameter
-                        fn calc_tile_row_3d(i: Int):
-                            @parameter
-                            fn calc_tile_cols_3d[nelts_inner: Int](j: Int):
-                                var idx = i * tile_j + j
-                                var a_val = self.data.load(
-                                    self_base + (io + i) * k + k_val
-                                )
-                                var b_val = rhs.data.load[width=nelts_inner](
-                                    rhs_base + k_val * p + jo + j
-                                )
-                                var acc = accumulators[idx]
-                                accumulators[idx] = acc + a_val * b_val[0]
-
-                            vectorize[calc_tile_cols_3d, nelts](tile_j)
-
-                        @parameter
-                        fn unroll_rows():
-                            @parameter
-                            for i in range(tile_i):
-                                calc_tile_row_3d(i)
-
-                        unroll_rows()
-
-                    for i in range(tile_i):
-                        for j in range(tile_j):
-                            if io + i < m and jo + j < p:
-                                C.data.store(
-                                    c_base + (io + i) * p + (jo + j),
-                                    accumulators[i * tile_j + j],
-                                )
-
-                @parameter
-                fn tile_parallel_rows_3d(yo: Int):
-                    var y = tile_i * yo
-                    for x in range(0, p, tile_j):
-                        calc_tile_3d(x, y)
-
-                parallelize[tile_parallel_rows_3d](
-                    (m + tile_i - 1) // tile_i, m
-                )
-
-            parallelize[calc_batch](batch, batch)
-            return C^
-
         else:
-            print("MatMul only supported for 2D and 3D tensors")
+            print("MatMul only supported for 2D tensors (matrices)")
             return Tensor(0)
 
     fn __matmul_simd__(self, rhs: Tensor) -> Tensor:
@@ -629,3 +508,9 @@ struct Tensor(Copyable, ImplicitlyCopyable, Movable):
             new_tensor.data.store(new_flat_idx, self.data.load(flat_idx))
 
         return new_tensor^
+
+    fn item(self) -> Float32:
+        """Extract scalar value from a scalar tensor."""
+        if self.shape.__len__() != 0:
+            print("Warning: item() called on non-scalar tensor")
+        return self.data.load(0)
