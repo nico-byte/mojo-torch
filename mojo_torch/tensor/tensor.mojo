@@ -11,65 +11,111 @@ alias type = DType.float32
 alias nelts = simd_width_of[Scalar[type]]()
 
 
-struct Tensor(Copyable, ImplicitlyCopyable, Movable):
-    """N-dimensional Tensor that generalizes Matrix to any number of dimensions.
-    """
-
-    var data: UnsafePointer[Scalar[type]]
+struct LayoutTensor(Copyable, Movable, Writable):
     var shape: List[Int]
     var strides: List[Int]
-    var size: Int
 
-    # Initialize with shape
-    fn __init__(out self, *dims: Int):
-        self.shape = List[Int]()
-        self.strides = List[Int]()
-        self.size = 1
-        for dim in dims:
-            self.shape.append(dim)
-            self.size *= dim
-        # For scalar (no dimensions), size should be 1
-        if dims.__len__() == 0:
-            self.size = 1
-        self.data = UnsafePointer[Scalar[type]].alloc(self.size)
-        memset_zero(self.data, self.size)
-        self.strides = self._compute_strides()
-
-    # Initialize with shape and default value
-    fn __init__(out self, var default_value: Float32, *dims: Int):
-        self.shape = List[Int]()
-        self.strides = List[Int]()
-        self.size = 1
-        for dim in dims:
-            self.shape.append(dim)
-            self.size *= dim
-        self.data = UnsafePointer[Scalar[type]].alloc(self.size)
-        for i in range(self.size):
-            self.data.store(i, default_value)
-        self.strides = self._compute_strides()
-
-    # Initialize with shape from List
     fn __init__(out self, shape: List[Int]):
         self.shape = shape.copy()
         self.strides = List[Int]()
-        self.size = 1
-        for dim in self.shape:
-            self.size *= dim
-        self.data = UnsafePointer[Scalar[type]].alloc(self.size)
-        memset_zero(self.data, self.size)
-        self.strides = self._compute_strides()
+        
+        # Compute strides for row-major (C-contiguous) layout
+        var stride = 1
+        for i in range(shape.__len__() - 1, -1, -1):
+            self.strides.append(stride)
+            stride *= shape[i]
+        
+        # Reverse strides to match shape order
+        var reversed_strides = List[Int]()
+        for i in range(self.strides.__len__() - 1, -1, -1):
+            reversed_strides.append(self.strides[i])
+        self.strides = reversed_strides.copy()
 
-    # Initialize with shape from List and default value
-    fn __init__(out self, shape: List[Int], default_value: Float32):
+    fn __init__(out self, shape: List[Int], strides: List[Int]):
         self.shape = shape.copy()
-        self.strides = List[Int]()
-        self.size = 1
+        self.strides = strides.copy()
+
+    fn __init__(out self, shape: (Int, Int), strides: (Int, Int)):
+        self.shape = List[Int](shape[0], shape[1])
+        self.strides = List[Int](strides[0], strides[1])
+
+    fn __init__(out self, shape: (Int, Int)):
+        self.strides = List[Int](shape[1], 1)
+        self.shape = List[Int](shape[0], shape[1])
+
+    @always_inline("nodebug")
+    fn __call__(self, indices: List[Int]) -> Int:
+        var offset = 0
+        for d in range(indices.__len__()):
+            offset += indices[d] * self.strides[d]
+        return offset
+
+    @always_inline("nodebug")
+    fn size(self) -> Int:
+        var total = 1
+        for shape in self.shape:
+            total *= shape
+        return total
+    
+    @always_inline("nodebug")
+    fn write_to[W: Writer](self, mut writer: W):
+        writer.write("Shape: ")
         for dim in self.shape:
-            self.size *= dim
-        self.data = UnsafePointer[Scalar[type]].alloc(self.size)
+            writer.write(dim, " ")
+        writer.write("| Strides: ")
+        for stride in self.strides:
+            writer.write(stride, " ")
+        writer.write("\n")
+
+
+struct Tensor[Type: DType](Copyable, ImplicitlyCopyable, Movable):
+    """
+    N-dimensional Tensor.
+    """
+
+    var data: UnsafePointer[Scalar[Type]]
+    var size: Int
+    var layout: LayoutTensor
+
+    fn __init__(out self, dims: List[Int]):
+        self.layout = LayoutTensor(dims)
+        self.size = self.layout.size()
+        self.data = UnsafePointer[Scalar[Type]].alloc(self.size)
+
+    fn __init__(out self, *dims: Int):
+        shape = [dim for dim in dims]
+        self.layout = LayoutTensor(shape)
+        self.size = self.layout.size()
+        self.data = UnsafePointer[Scalar[Type]].alloc(self.size)
+
+    fn __init__(out self, dims: List[Int], default_value: Scalar[Type]):
+        self.layout = LayoutTensor(dims)
+        self.size = self.layout.size()
+        self.data = UnsafePointer[Scalar[Type]].alloc(self.size)
         for i in range(self.size):
             self.data.store(i, default_value)
-        self.strides = self._compute_strides()
+
+    fn __init__(out self, *dims: Int, default_value: Scalar[Type]):
+        shape = [dim for dim in dims]
+        self.layout = LayoutTensor(shape)
+        self.size = self.layout.size()
+        self.data = UnsafePointer[Scalar[Type]].alloc(self.size)
+        for i in range(self.size):
+            self.data.store(i, default_value)
+
+    fn __init__(
+        out self, data: UnsafePointer[Scalar[Type]], var layout: LayoutTensor
+    ):
+        self.data = UnsafePointer[Scalar[Type]](data)
+        self.layout = layout.copy()
+        self.size = self.layout.size()
+
+    fn __init__(
+        out self, data: UnsafePointer[Scalar[Type]], shape: (Int, Int)
+    ):
+        self.data = data
+        self.layout = LayoutTensor(shape)
+        self.size = self.layout.size()
 
     @staticmethod
     fn from_numpy(numpy_array: PythonObject) -> Self:
@@ -94,13 +140,13 @@ struct Tensor(Copyable, ImplicitlyCopyable, Movable):
 
             # Create tensor and populate data
             var tensor = Self(total_size)
-            tensor.shape = shape_list^
+            tensor.layout.shape = shape_list^
 
             # Copy values from numpy array
             for i in range(total_size):
-                tensor.data.store(i, Float32(flattened[i]))
+                tensor.data.store(i, Scalar[Type](flattened[i]))
 
-            tensor.strides = tensor._compute_strides()
+            tensor.layout.strides = tensor._compute_strides()
             return tensor^
         except:
             print("Failed to create Tensor from numpy array")
@@ -110,20 +156,27 @@ struct Tensor(Copyable, ImplicitlyCopyable, Movable):
     fn scalar(value: Float32) -> Self:
         """Create a scalar tensor with empty shape."""
         var tensor = Self()  # No dimensions = scalar
-        tensor.data.store(0, value)
+        tensor.data.store(0, Scalar[Type](value))
         return tensor^
+
+    @always_inline("nodebug")
+    fn slice(self, i: Int, j: Int, ir: Int, jr: Int) -> Self:
+        var shape = (ir, jr)
+        var strides = (self.layout.strides[0], self.layout.strides[1])
+        var offset = self.layout([i, j])
+        return Tensor(self.data + offset, LayoutTensor(shape, strides))
 
     fn _compute_strides(self) -> List[Int]:
         """Compute strides based on shape for row-major order."""
         # For scalar tensors (empty shape), return empty strides
-        if self.shape.__len__() == 0:
+        if self.layout.shape.__len__() == 0:
             return List[Int]()
 
         var strides = List[Int]()
         var stride = 1
-        for i in range(self.shape.__len__() - 1, -1, -1):
+        for i in range(self.layout.shape.__len__() - 1, -1, -1):
             strides.append(stride)
-            stride *= self.shape[i]
+            stride *= self.layout.shape[i]
 
         # Reverse strides to match dimension order
         var result = List[Int]()
@@ -134,20 +187,20 @@ struct Tensor(Copyable, ImplicitlyCopyable, Movable):
     fn _flat_index(self, indices: VariadicList[Int]) -> Int:
         """Convert multi-dimensional indices to flat index."""
         # For scalar tensors, always return index 0
-        if self.shape.__len__() == 0:
+        if self.layout.shape.__len__() == 0:
             return 0
         var idx = 0
         for i in range(indices.__len__()):
-            idx += indices[i] * self.strides[i]
+            idx += indices[i] * self.layout.strides[i]
         return idx
 
-    fn __getitem__(self, *indices: Int) -> Float32:
+    fn __getitem__(self, *indices: Int) -> Scalar[Type]:
         return self.data.load(self._flat_index(indices))
 
-    fn __setitem__(self, *indices: Int, val: Float32):
+    fn __setitem__(self, *indices: Int, val: Scalar[Type]):
         self.data.store(self._flat_index(indices), val)
 
-    fn __setitem__(self, rhs: Tensor):
+    fn __setitem__(self, rhs: Tensor[Type]):
         for i in range(self.size):
             self.data.store(i, rhs.data.load(i))
 
@@ -155,10 +208,9 @@ struct Tensor(Copyable, ImplicitlyCopyable, Movable):
         return self.size
 
     fn __copyinit__(out self, other: Self):
-        self.shape = other.shape.copy()
-        self.strides = other.strides.copy()
+        self.layout = other.layout.copy()
         self.size = other.size
-        self.data = UnsafePointer[Scalar[type]].alloc(other.size)
+        self.data = UnsafePointer[Scalar[Type]].alloc(other.size)
         memcpy(self.data, other.data, other.size)
 
     # fn reshape(self, *new_dims: Int) -> Tensor:
@@ -173,106 +225,106 @@ struct Tensor(Copyable, ImplicitlyCopyable, Movable):
     #    memcpy(new_tensor.data, self.data, self.size)
     #    return new_tensor
 
-    fn __lt__(self, rhs: Tensor) -> Bool:
+    fn __lt__(self, rhs: Tensor[Type]) -> Bool:
         for i in range(self.size):
             if self.data.load(i) < rhs.data.load(i):
                 return True
         return False
 
-    fn __gt__(self, rhs: Tensor) -> Bool:
+    fn __gt__(self, rhs: Tensor[Type]) -> Bool:
         for i in range(self.size):
             if self.data.load(i) > rhs.data.load(i):
                 return True
         return False
 
-    fn __eq__(self, rhs: Tensor) -> Bool:
+    fn __eq__(self, rhs: Tensor[Type]) -> Bool:
         for i in range(self.size):
-            var self_val: Float32 = self.data.load(i)
-            var rhs_val: Float32 = rhs.data.load(i)
+            var self_val: Scalar[Type] = self.data.load(i)
+            var rhs_val: Scalar[Type] = rhs.data.load(i)
             if self_val < rhs_val or self_val > rhs_val:
                 return False
         return True
 
-    fn __ne__(self, rhs: Tensor) -> Bool:
+    fn __ne__(self, rhs: Tensor[Type]) -> Bool:
         return not self == rhs
 
-    fn __ge__(self, rhs: Tensor) -> Bool:
+    fn __ge__(self, rhs: Tensor[Type]) -> Bool:
         return self > rhs or self == rhs
 
-    fn __le__(self, rhs: Tensor) -> Bool:
+    fn __le__(self, rhs: Tensor[Type]) -> Bool:
         return self < rhs or self == rhs
 
-    fn __add__(self, rhs: Tensor) -> Tensor:
-        var new_tensor: Tensor = Tensor(self.shape)
+    fn __add__(self, rhs: Tensor[Type]) -> Tensor[Type]:
+        var new_tensor: Tensor[Type] = Tensor[Type](self.layout.shape)
         for i in range(self.size):
             new_tensor.data.store(i, self.data.load(i) + rhs.data.load(i))
         return new_tensor^
 
-    fn __pow__(self, rhs: Tensor) -> Tensor:
-        var new_tensor: Tensor = Tensor(self.shape)
+    fn __pow__(self, rhs: Tensor[Type]) -> Tensor[Type]:
+        var new_tensor: Tensor[Type] = Tensor[Type](self.layout.shape)
         for i in range(self.size):
             new_tensor.data.store(i, self.data.load(i) ** rhs.data.load(i))
         return new_tensor^
 
-    fn __sub__(self, rhs: Tensor) -> Tensor:
-        var new_tensor: Tensor = Tensor(self.shape)
+    fn __sub__(self, rhs: Tensor[Type]) -> Tensor[Type]:
+        var new_tensor: Tensor[Type] = Tensor[Type](self.layout.shape)
         for i in range(self.size):
             new_tensor.data.store(i, self.data.load(i) - rhs.data.load(i))
         return new_tensor^
 
-    fn __mul__(self, rhs: Tensor) -> Tensor:
-        var new_tensor: Tensor = Tensor(self.shape)
+    fn __mul__(self, rhs: Tensor[Type]) -> Tensor[Type]:
+        var new_tensor: Tensor[Type] = Tensor[Type](self.layout.shape)
         for i in range(self.size):
             new_tensor.data.store(i, self.data.load(i) * rhs.data.load(i))
         return new_tensor^
 
-    fn __truediv__(self, rhs: Tensor) -> Tensor:
-        var new_tensor: Tensor = Tensor(self.shape)
+    fn __truediv__(self, rhs: Tensor[Type]) -> Tensor[Type]:
+        var new_tensor: Tensor[Type] = Tensor[Type](self.layout.shape)
         for i in range(self.size):
             new_tensor.data.store(i, self.data.load(i) / rhs.data.load(i))
         return new_tensor^
 
-    fn __add__(self, rhs: Float32) -> Tensor:
-        var new_tensor: Tensor = Tensor(self.shape)
+    fn __add__(self, rhs: Scalar[Type]) -> Tensor[Type]:
+        var new_tensor: Tensor[Type] = Tensor[Type](self.layout.shape)
         for i in range(self.size):
             new_tensor.data.store(i, self.data.load(i) + rhs)
         return new_tensor^
 
-    fn __pow__(self, rhs: Float32) -> Tensor:
-        var new_tensor: Tensor = Tensor(self.shape)
+    fn __pow__(self, rhs: Scalar[Type]) -> Tensor[Type]:
+        var new_tensor: Tensor[Type] = Tensor[Type](self.layout.shape)
         for i in range(self.size):
             new_tensor.data.store(i, self.data.load(i) ** rhs)
         return new_tensor^
 
-    fn __sub__(self, rhs: Float32) -> Tensor:
-        var new_tensor: Tensor = Tensor(self.shape)
+    fn __sub__(self, rhs: Scalar[Type]) -> Tensor[Type]:
+        var new_tensor: Tensor[Type] = Tensor[Type](self.layout.shape)
         for i in range(self.size):
             new_tensor.data.store(i, self.data.load(i) - rhs)
         return new_tensor^
 
-    fn __mul__(self, rhs: Float32) -> Tensor:
-        var new_tensor: Tensor = Tensor(self.shape)
+    fn __mul__(self, rhs: Scalar[Type]) -> Tensor[Type]:
+        var new_tensor: Tensor[Type] = Tensor[Type](self.layout.shape)
         for i in range(self.size):
             new_tensor.data.store(i, self.data.load(i) * rhs)
         return new_tensor^
 
-    fn __truediv__(self, rhs: Float32) -> Tensor:
-        var new_tensor: Tensor = Tensor(self.shape)
+    fn __truediv__(self, rhs: Scalar[Type]) -> Tensor[Type]:
+        var new_tensor: Tensor[Type] = Tensor[Type](self.layout.shape)
         for i in range(self.size):
             new_tensor.data.store(i, self.data.load(i) / rhs)
         return new_tensor^
 
-    fn __matmul__(self, rhs: Tensor) -> Tensor:
+    fn __matmul__(self, rhs: Tensor[Type]) -> Tensor[Type]:
         """
         Optimized matrix multiplication supporting 2D tensors.
         2D: [m, k] @ [k, n] -> [m, n].
         """
-        if self.shape.__len__() == 2 and rhs.shape.__len__() == 2:
+        if self.layout.shape.__len__() == 2 and rhs.layout.shape.__len__() == 2:
             # 2D matrix multiplication
-            var m = self.shape[0]
-            var k = self.shape[1]
-            var n = rhs.shape[0]
-            var p = rhs.shape[1]
+            var m = self.layout.shape[0]
+            var k = self.layout.shape[1]
+            var n = rhs.layout.shape[0]
+            var p = rhs.layout.shape[1]
 
             if k != n:
                 print(
@@ -281,9 +333,9 @@ struct Tensor(Copyable, ImplicitlyCopyable, Movable):
                     + " != rhs.rows: "
                     + String(n)
                 )
-                return Tensor(0)
+                return Tensor[Type](0)
 
-            var C: Tensor = Tensor(m, p)
+            var C: Tensor[Type] = Tensor[Type](m, p)
 
             @parameter
             fn calc_row(row: Int):
@@ -309,145 +361,26 @@ struct Tensor(Copyable, ImplicitlyCopyable, Movable):
             return C^
         else:
             print("MatMul only supported for 2D tensors (matrices)")
-            return Tensor(0)
+            return Tensor[Type](0)
 
-    fn __matmul_tiled__(self, rhs: Tensor) -> Tensor:
-        """
-        Tiled matrix multiplication with register accumulation.
-        """
-        if self.shape.__len__() == 2 and rhs.shape.__len__() == 2:
-            var m = self.shape[0]
-            var k = self.shape[1]
-            var n = rhs.shape[0]
-            var p = rhs.shape[1]
-
-            if k != n:
-                print(
-                    "MatMul not possible -> self.cols: "
-                    + String(k)
-                    + " != rhs.rows: "
-                    + String(n)
-                )
-                return Tensor(0)
-
-            var C: Tensor = Tensor(m, p)
-
-            alias tile_i = 64
-            alias tile_j = nelts * 64
-
-            @parameter
-            fn calc_tile(jo: Int, io: Int):
-                var accumulators = stack_allocation[
-                    tile_i * tile_j, Scalar[type]
-                ]()
-
-                for i in range(tile_i * tile_j):
-                    accumulators[i] = Scalar[type](0)
-
-                for k_val in range(k):
-
-                    @parameter
-                    fn calc_tile_row(i: Int):
-                        @parameter
-                        fn calc_tile_cols[nelts_inner: Int](j: Int):
-                            var idx = i * tile_j + j
-                            var a_val = self.data.load((io + i) * k + k_val)
-                            var b_val = rhs.data.load[width=nelts_inner](
-                                k_val * p + jo + j
-                            )
-                            var acc = accumulators.load[width=nelts_inner](idx)
-                            accumulators.store[width=nelts_inner](
-                                idx, acc + a_val * b_val
-                            )
-
-                        vectorize[calc_tile_cols, nelts](tile_j)
-
-                    @parameter
-                    fn unroll_rows():
-                        @parameter
-                        for i in range(tile_i):
-                            calc_tile_row(i)
-
-                    unroll_rows()
-
-                for i in range(tile_i):
-                    for j in range(tile_j):
-                        if io + i < m and jo + j < p:
-                            C.data.store(
-                                (io + i) * p + (jo + j),
-                                accumulators[i * tile_j + j],
-                            )
-
-            @parameter
-            fn tile_parallel_rows(yo: Int):
-                var y = tile_i * yo
-                for x in range(0, p, tile_j):
-                    calc_tile(x, y)
-
-            parallelize[tile_parallel_rows]((m + tile_i - 1) // tile_i, m)
-            return C^
-        else:
-            print("MatMul only supported for 2D tensors (matrices)")
-            return Tensor(0)
-
-    fn __matmul_simd__(self, rhs: Tensor) -> Tensor:
-        """
-        Pure SIMD vectorized matmul - fastest for smaller matrices (<256x256).
-        """
-        if self.shape.__len__() != 2 or rhs.shape.__len__() != 2:
-            print("MatMul only supported for 2D tensors (matrices)")
-            return Tensor(0)
-
-        var m = self.shape[0]
-        var k = self.shape[1]
-        var n = rhs.shape[0]
-        var p = rhs.shape[1]
-
-        if k != n:
-            print(
-                "MatMul not possible -> self.cols: "
-                + String(k)
-                + " != rhs.rows: "
-                + String(n)
-            )
-            return Tensor(0)
-
-        var C: Tensor = Tensor(m, p)
-
-        for i in range(m):
-            for kk in range(k):
-
-                @parameter
-                fn dot[nelts_inner: Int](j: Int):
-                    var c_val = C.data.load[width=nelts_inner](i * p + j)
-                    var a_val = self.data.load(i * k + kk)
-                    var b_val = rhs.data.load[width=nelts_inner](kk * p + j)
-                    C.data.store[width=nelts_inner](
-                        i * p + j, c_val + a_val * b_val
-                    )
-
-                vectorize[dot, nelts](p)
-
-        return C^
-
-    fn pow(self, rhs: Tensor) -> Tensor:
-        var new_tensor: Tensor = Tensor(self.shape)
+    fn pow(self, rhs: Tensor[Type][]) -> Tensor[Type]:
+        var new_tensor: Tensor[Type] = Tensor[Type](self.layout.shape)
         for i in range(self.size):
             new_tensor.data.store(i, rhs.data.load(i) ** self.data.load(i))
         return new_tensor^
 
-    fn T(self) -> Tensor:
+    fn T(self) -> Tensor[Type]:
         """
         Transpose a 2D tensor (matrix) - swaps rows and columns.
         Shape [m, n] becomes [n, m].
         """
-        if self.shape.__len__() != 2:
+        if self.layout.shape.__len__() != 2:
             print("Transpose only supported for 2D tensors")
-            return Tensor(0)
+            return Tensor[Type](0)
 
-        var m = self.shape[0]
-        var n = self.shape[1]
-        var new_tensor: Tensor = Tensor(n, m)
+        var m = self.layout.shape[0]
+        var n = self.layout.shape[1]
+        var new_tensor: Tensor[Type] = Tensor[Type](n, m)
 
         for i in range(m):
             for j in range(n):
@@ -455,43 +388,43 @@ struct Tensor(Copyable, ImplicitlyCopyable, Movable):
 
         return new_tensor^
 
-    fn transpose(self, axis1: Int, axis2: Int) -> Tensor:
+    fn transpose(self, axis1: Int, axis2: Int) -> Tensor[Type]:
         """
         Transpose arbitrary axes in an N-dimensional tensor.
         Swaps the dimensions at axis1 and axis2.
         """
         if (
             axis1 < 0
-            or axis1 >= self.shape.__len__()
+            or axis1 >= self.layout.shape.__len__()
             or axis2 < 0
-            or axis2 >= self.shape.__len__()
+            or axis2 >= self.layout.shape.__len__()
         ):
             print("Invalid axes for transpose")
-            return Tensor(0)
+            return Tensor[Type](0)
 
         # Create new shape with swapped dimensions
         var new_shape = List[Int]()
-        for i in range(self.shape.__len__()):
+        for i in range(self.layout.shape.__len__()):
             if i == axis1:
-                new_shape.append(self.shape[axis2])
+                new_shape.append(self.layout.shape[axis2])
             elif i == axis2:
-                new_shape.append(self.shape[axis1])
+                new_shape.append(self.layout.shape[axis1])
             else:
-                new_shape.append(self.shape[i])
+                new_shape.append(self.layout.shape[i])
 
-        var new_tensor = Tensor(new_shape)
+        var new_tensor = Tensor[Type](new_shape)
 
         # Copy data with transposed indexing
         var old_indices = List[Int]()
-        for _ in range(self.shape.__len__()):
+        for _ in range(self.layout.shape.__len__()):
             old_indices.append(0)
 
         for flat_idx in range(self.size):
             # Convert flat index to multi-dimensional index
             var idx = flat_idx
-            for i in range(self.shape.__len__() - 1, -1, -1):
-                old_indices[i] = idx % self.shape[i]
-                idx /= self.shape[i]
+            for i in range(self.layout.shape.__len__() - 1, -1, -1):
+                old_indices[i] = idx % self.layout.shape[i]
+                idx /= self.layout.shape[i]
 
             # Swap axes
             var temp = old_indices[axis1]
@@ -501,16 +434,22 @@ struct Tensor(Copyable, ImplicitlyCopyable, Movable):
             # Calculate new flat index and copy
             var new_flat_idx = 0
             var stride = 1
-            for i in range(new_tensor.shape.__len__() - 1, -1, -1):
+            for i in range(new_tensor.layout.shape.__len__() - 1, -1, -1):
                 new_flat_idx += old_indices[i] * stride
-                stride *= new_tensor.shape[i]
+                stride *= new_tensor.layout.shape[i]
 
             new_tensor.data.store(new_flat_idx, self.data.load(flat_idx))
 
         return new_tensor^
 
-    fn item(self) -> Float32:
+    fn scalar(self) -> Scalar[Type]:
+        """Return the scalar value of a scalar tensor."""
+        if self.layout.shape.__len__() != 0:
+            print("Warning: scalar() called on non-scalar tensor")
+        return self.data.load(0)
+
+    fn item(self) -> Scalar[Type]:
         """Extract scalar value from a scalar tensor."""
-        if self.shape.__len__() != 0:
+        if self.layout.shape.__len__() != 0:
             print("Warning: item() called on non-scalar tensor")
         return self.data.load(0)
