@@ -13,7 +13,9 @@ fn relu[Type: DType](x: Tensor[Type]) -> Tensor[Type]:
     return output^
 
 
-fn relu_backward[Type: DType](output: Tensor[Type], grad_output: Tensor[Type]) -> Tensor[Type]:
+fn relu_backward[
+    Type: DType
+](output: Tensor[Type], grad_output: Tensor[Type]) -> Tensor[Type]:
     """ReLU backward: gradient = grad_output if output > 0 else 0."""
     var grad_input = Tensor[Type](grad_output.layout.shape)
     for i in range(grad_output.size):

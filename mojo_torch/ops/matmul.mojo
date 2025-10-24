@@ -18,7 +18,11 @@ alias type = Scalar[DType.float32]
 alias nelts = simd_width_of[Scalar[DType.float32]]()
 
 
-fn matmul[Type: DType](input: Tensor[Type], other: Tensor[Type], tiled: Bool = False) -> Tensor[Type]:
+fn matmul[
+    Type: DType
+](input: Tensor[Type], other: Tensor[Type], tiled: Bool = False) -> Tensor[
+    Type
+]:
     """
     Matrix product of two tensors following PyTorch's torch.matmul behavior.
 
@@ -45,9 +49,7 @@ fn matmul[Type: DType](input: Tensor[Type], other: Tensor[Type], tiled: Bool = F
         var output = Tensor[Type](
             [input.layout.shape[0], other.layout.shape[1]]
         )
-        _matmul[4000, 4000, 4000](
-            output, input, other
-        )
+        _matmul[1024, 1024, 1024](output, input, other)
         return output^
 
     # Case 3: First is 1D, second is 2D (prepend 1 to first, then remove)
@@ -63,7 +65,9 @@ fn matmul[Type: DType](input: Tensor[Type], other: Tensor[Type], tiled: Bool = F
         return _batched_matmul(input, other)
 
 
-fn _dot_product[Type: DType](input: Tensor[Type], other: Tensor[Type]) -> Tensor[Type]:
+fn _dot_product[
+    Type: DType
+](input: Tensor[Type], other: Tensor[Type]) -> Tensor[Type]:
     """Compute dot product of two 1D tensors."""
     if input.layout.shape[0] != other.layout.shape[0]:
         print("Dot product requires tensors of same length")
@@ -76,11 +80,11 @@ fn _dot_product[Type: DType](input: Tensor[Type], other: Tensor[Type]) -> Tensor
     return Tensor[Type].scalar(sum_val)
 
 
-fn _matmul_1d_2d[Type: DType](input: Tensor[Type], other: Tensor[Type], tiled: Bool = False) -> Tensor[Type]:
-    """
-    Matrix multiply where first tensor is 1D and second is 2D.
-    Prepends 1 to first tensor's dimension, performs matmul, then removes prepended dimension.
-    """
+fn _matmul_1d_2d[
+    Type: DType
+](input: Tensor[Type], other: Tensor[Type], tiled: Bool = False) -> Tensor[
+    Type
+]:
     var n = input.layout.shape[0]
     var m = other.layout.shape[0]
     var p = other.layout.shape[1]
@@ -94,26 +98,23 @@ fn _matmul_1d_2d[Type: DType](input: Tensor[Type], other: Tensor[Type], tiled: B
         )
         return Tensor[Type]([1], 0.0)
 
-    # Create temporary 2D tensor with shape [1, n]
     var temp_input = Tensor[Type]([1, n])
     for i in range(n):
         temp_input[0, i] = input.data.load(i)
 
-    # Perform matrix multiplication [1, n] @ [m, p] -> [1, p]
     var temp_result: Tensor[Type] = Tensor[Type]([1, p])
-    _matmul[4000, 4000, 4000](
-        temp_result, temp_input, other
-    )
+    _matmul[1024, 1024, 1024](temp_result, temp_input, other)
 
-    # Remove the prepended dimension to get [p]
     var result = Tensor[Type]([p])
     for i in range(p):
         result.data.store(i, temp_result[0, i])
 
-    return result.copy()
+    return result^
 
 
-fn _matmul_2d_1d[Type: DType](input: Tensor[Type], other: Tensor[Type]) -> Tensor[Type]:
+fn _matmul_2d_1d[
+    Type: DType
+](input: Tensor[Type], other: Tensor[Type]) -> Tensor[Type]:
     """
     Matrix-vector product where first tensor is 2D and second is 1D.
     """
@@ -141,7 +142,11 @@ fn _matmul_2d_1d[Type: DType](input: Tensor[Type], other: Tensor[Type]) -> Tenso
     return result.copy()
 
 
-fn _batched_matmul[Type: DType](input: Tensor[Type], other: Tensor[Type], tiled: Bool = False) -> Tensor[Type]:
+fn _batched_matmul[
+    Type: DType
+](input: Tensor[Type], other: Tensor[Type], tiled: Bool = False) -> Tensor[
+    Type
+]:
     """
     Optimized batched matrix multiplication with parallelization.
     """
@@ -181,7 +186,9 @@ fn _batched_matmul[Type: DType](input: Tensor[Type], other: Tensor[Type], tiled:
         return Tensor[Type]([1], 0.0)
 
     var broadcast_shape = _compute_broadcast_shape(
-        input_promoted, other_promoted, max(input_promoted_ndim - 2, other_promoted_ndim - 2)
+        input_promoted,
+        other_promoted,
+        max(input_promoted_ndim - 2, other_promoted_ndim - 2),
     )
 
     var result_shape = List[Int]()
@@ -201,10 +208,15 @@ fn _batched_matmul[Type: DType](input: Tensor[Type], other: Tensor[Type], tiled:
     fn process_batch(batch_idx: Int):
         # Direct matrix computation without temporary tensors
         _compute_batch_direct(
-            input_promoted, other_promoted, result,
-            batch_idx, broadcast_shape,
-            input_matrix_rows, input_matrix_cols, other_matrix_cols,
-            tiled
+            input_promoted,
+            other_promoted,
+            result,
+            batch_idx,
+            broadcast_shape,
+            input_matrix_rows,
+            input_matrix_cols,
+            other_matrix_cols,
+            tiled,
         )
 
     parallelize[process_batch](total_batches, total_batches)
@@ -280,82 +292,94 @@ fn _compute_broadcast_shape(
     return final_shape^
 
 
-fn _compute_batch_direct[Type: DType](
+fn _compute_batch_direct[
+    Type: DType
+](
     input: Tensor[Type],
-    other: Tensor[Type], 
+    other: Tensor[Type],
     result: Tensor[Type],
     batch_idx: Int,
     batch_shape: List[Int],
     m: Int,
     k: Int,
     n: Int,
-    tiled: Bool
+    tiled: Bool,
 ):
     """Compute batch matrix multiplication using optimized tensor matmul."""
-    
-    # Extract matrix views without copying data
-    var input_batch_offset = _compute_batch_offset(input, batch_idx, batch_shape)
-    var other_batch_offset = _compute_batch_offset(other, batch_idx, batch_shape)
-    var result_batch_offset = _compute_result_batch_offset(result, batch_idx, batch_shape)
-    
-    # Create tensor views pointing to batch data
-    var input_matrix = Tensor[Type]([m, k])
-    var other_matrix = Tensor[Type]([k, n])
-    var result_matrix = Tensor[Type]([m, n])
 
-    # Point to the correct batch data
-    input_matrix.data = input.data + input_batch_offset
-    other_matrix.data = other.data + other_batch_offset
-    result_matrix.data = result.data + result_batch_offset
-    
-    # Use the optimized tensor matmul implementation
-    _matmul[4000, 4000, 4000](
-        result_matrix, input, other
+    var input_batch_offset = _compute_batch_offset(
+        input, batch_idx, batch_shape
+    )
+    var other_batch_offset = _compute_batch_offset(
+        other, batch_idx, batch_shape
+    )
+    var result_batch_offset = _compute_result_batch_offset(
+        result, batch_idx, batch_shape
     )
 
-fn _compute_batch_offset(tensor: Tensor, batch_idx: Int, batch_shape: List[Int]) -> Int:
+    # Create views into batch data without copying
+    var input_view = Tensor[Type](input.data + input_batch_offset, (m, k))
+    var other_view = Tensor[Type](other.data + other_batch_offset, (k, n))
+    var result_view = Tensor[Type](result.data + result_batch_offset, (m, n))
+
+    # Compute matmul for this batch
+    _matmul[1024, 1024, 1024](result_view, input_view, other_view)
+
+
+fn _compute_batch_offset(
+    tensor: Tensor, batch_idx: Int, batch_shape: List[Int]
+) -> Int:
     """Compute the flat offset for a batch in the tensor."""
     var ndim = tensor.layout.shape.__len__()
     if ndim <= 2:
         return 0  # No batch dimensions
-    
+
     var batch_dims = ndim - 2
-    var matrix_size = tensor.layout.shape[ndim - 2] * tensor.layout.shape[ndim - 1]
-    
+    var matrix_size = (
+        tensor.layout.shape[ndim - 2] * tensor.layout.shape[ndim - 1]
+    )
+
     # Convert linear batch_idx to multidimensional coordinates
     var offset = 0
     var idx = batch_idx
     var stride = matrix_size
-    
+
     for i in range(batch_dims - 1, -1, -1):
         var tensor_dim_size = tensor.layout.shape[i]
         var coord = idx % tensor_dim_size
         offset += coord * stride
         stride *= tensor.layout.shape[i]
         idx /= tensor_dim_size
-    
+
     return offset
 
-fn _compute_result_batch_offset(result: Tensor, batch_idx: Int, batch_shape: List[Int]) -> Int:
+
+fn _compute_result_batch_offset(
+    result: Tensor, batch_idx: Int, batch_shape: List[Int]
+) -> Int:
     """Compute the flat offset for a batch in the result tensor."""
     var ndim = result.layout.shape.__len__()
     var batch_dims = ndim - 2
-    var matrix_size = result.layout.shape[ndim - 2] * result.layout.shape[ndim - 1]
-    
+    var matrix_size = (
+        result.layout.shape[ndim - 2] * result.layout.shape[ndim - 1]
+    )
+
     var offset = 0
     var idx = batch_idx
     var stride = matrix_size
-    
+
     for i in range(batch_dims - 1, -1, -1):
         var coord = idx % batch_shape[batch_dims - 1 - i]
         offset += coord * stride
         stride *= batch_shape[batch_dims - 1 - i]
         idx /= batch_shape[batch_dims - 1 - i]
-    
+
     return offset
 
 
-fn _compute_flat_index[Type: DType](tensor: Tensor[Type], indices: List[Int]) -> Int:
+fn _compute_flat_index[
+    Type: DType
+](tensor: Tensor[Type], indices: List[Int]) -> Int:
     """Compute flat index from multi-dimensional indices."""
     var flat_idx = 0
     for i in range(indices.__len__()):
@@ -363,7 +387,9 @@ fn _compute_flat_index[Type: DType](tensor: Tensor[Type], indices: List[Int]) ->
     return flat_idx
 
 
-fn _reshape_tensor[Type: DType](tensor: Tensor[Type], new_shape: List[Int]) -> Tensor[Type]:
+fn _reshape_tensor[
+    Type: DType
+](tensor: Tensor[Type], new_shape: List[Int]) -> Tensor[Type]:
     """Reshape a tensor to a new shape (must have same total size)."""
     var new_size = 1
     for dim in new_shape:
@@ -381,6 +407,7 @@ fn _reshape_tensor[Type: DType](tensor: Tensor[Type], new_shape: List[Int]) -> T
 
 
 #################################
+
 
 @always_inline
 fn roundup(a: Int, b: Int) -> Int:
@@ -425,7 +452,9 @@ fn pack_A[
                     ](Ac.layout.strides[0]),
                 )
 
-            vectorize[pack_col, simd_width_of[Type]()](min(Ac.layout.shape[0] - i, mr))
+            vectorize[pack_col, simd_width_of[Type]()](
+                min(Ac.layout.shape[0] - i, mr)
+            )
 
             for l in range(min(Ac.layout.shape[0] - i, mr), mr):
                 dst_ptr[l] = Scalar[Type](0)
@@ -517,9 +546,9 @@ fn loop_n[
     nr: Int,
 ](mut C: Tensor[Type], A: Tensor[Type], B: Tensor[Type]):
     var max_threads = num_performance_cores()
-    var nc_per_thread = nc if nc * max_threads <= B.layout.shape[1] else rounddown(
-        B.layout.shape[1] // max_threads, nr
-    )
+    var nc_per_thread = nc if nc * max_threads <= B.layout.shape[
+        1
+    ] else rounddown(B.layout.shape[1] // max_threads, nr)
     var balanced_part = rounddown(B.layout.shape[1], nc_per_thread)
 
     var remainder = B.layout.shape[1] - balanced_part
@@ -541,7 +570,12 @@ fn loop_n[
         var j = idx * nc_per_thread
         var Bc = pack_B[kc, nr](
             Bc_buffer,
-            B.slice(0, j, B.layout.shape[0], min(B.layout.shape[1] - j, nc_per_thread)),
+            B.slice(
+                0,
+                j,
+                B.layout.shape[0],
+                min(B.layout.shape[1] - j, nc_per_thread),
+            ),
         )
         var Cc = C.slice(
             0, j, C.layout.shape[0], min(C.layout.shape[1] - j, nc_per_thread)
@@ -564,11 +598,17 @@ fn loop_n[
         var Bc = pack_B[kc, nr](
             Bc_buffer,
             B.slice(
-                0, j, B.layout.shape[0], min(B.layout.shape[1] - j, remainder_per_thread)
+                0,
+                j,
+                B.layout.shape[0],
+                min(B.layout.shape[1] - j, remainder_per_thread),
             ),
         )
         var Cc = C.slice(
-            0, j, C.layout.shape[0], min(C.layout.shape[1] - j, remainder_per_thread)
+            0,
+            j,
+            C.layout.shape[0],
+            min(C.layout.shape[1] - j, remainder_per_thread),
         )
         macro_kernel[mr, nr](Cc, A, Bc)
         Bc_buffer.free()
@@ -589,7 +629,9 @@ fn macro_kernel[
     @parameter
     fn parallelize_ir(idx: Int):
         var ir = idx * mr
-        var Ar = Tensor[Type](Ac.data + ir * Ac.layout.shape[1], (mr, Ac.layout.shape[1]))
+        var Ar = Tensor[Type](
+            Ac.data + ir * Ac.layout.shape[1], (mr, Ac.layout.shape[1])
+        )
         for jr in range(0, Bc.layout.shape[1], nr):
             var Cr = Cc.slice(
                 ir,
@@ -606,7 +648,9 @@ fn macro_kernel[
             else:
                 micro_kernel[mr, nr, True](Cr, Ar, Br)
 
-    parallelize[parallelize_ir]((Ac.layout.shape[0] + mr - 1) // mr, 2)
+    parallelize[parallelize_ir](
+        (Ac.layout.shape[0] + mr - 1) // mr, num_performance_cores()
+    )
 
 
 @always_inline
@@ -636,7 +680,9 @@ fn micro_kernel[
                 @parameter
                 fn load_col[width: Int](j: Int):
                     (cr_ptr + (i * nr + j)).store(
-                        (Cr_ptr + (i * Cr.layout.strides[0] + j)).load[width=width](),
+                        (Cr_ptr + (i * Cr.layout.strides[0] + j)).load[
+                            width=width
+                        ](),
                     )
 
                 vectorize[load_col, simd_width](Cr.layout.shape[1])
@@ -648,7 +694,9 @@ fn micro_kernel[
             @parameter
             for j in range(0, nr, simd_width):
                 (cr_ptr + i * nr + j).store(
-                    (Cr_ptr + (i * Cr.layout.strides[0] + j)).load[width=simd_width](),
+                    (Cr_ptr + (i * Cr.layout.strides[0] + j)).load[
+                        width=simd_width
+                    ](),
                 )
 
     for _ in range(Ar.layout.shape[1]):
@@ -656,7 +704,8 @@ fn micro_kernel[
         @parameter
         for j in range(0, nr, simd_width):
             br[j // simd_width] = (Br_ptr + j).load[
-                width=simd_width, alignment = size_of[Type]() * simd_width_of[Type]()
+                width=simd_width,
+                alignment = size_of[Type]() * simd_width_of[Type](),
             ]()
 
         @parameter
@@ -706,17 +755,19 @@ fn micro_kernel[
 fn matmul_params[Type: DType]() -> IndexList[5]:
     alias mc = 8192 // size_of[Type]()  # fix this for simplicity
     alias N = simd_width_of[Type]()
-    alias L1_ASSOCIATIVITY = 8
-    alias L1_CACHE_SIZE = 96 * 1024
+    alias L1_ASSOCIATIVITY = 12
+    alias L1_CACHE_SIZE = 192 * 1024
     alias L2_ASSOCIATIVITY = 16
-    alias L2_CACHE_SIZE = 6 * 1024 * 1024
+    alias L2_CACHE_SIZE = 12 * 1024 * 1024
 
     alias Vectors = 32 if CompilationTarget.has_avx512f() else 16
 
     @parameter
     fn compute_kc[mr: Int, nr: Int]() -> Int:
         alias CBr = Int((L1_ASSOCIATIVITY - 1) / (1 + mr / nr))
-        return (CBr * L1_CACHE_SIZE) // (nr * size_of[Type]() * L1_ASSOCIATIVITY)
+        return (CBr * L1_CACHE_SIZE) // (
+            nr * size_of[Type]() * L1_ASSOCIATIVITY
+        )
 
     @parameter
     fn compute_params[C: Int]() -> IndexList[5]:

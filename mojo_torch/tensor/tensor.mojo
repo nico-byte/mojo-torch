@@ -6,6 +6,7 @@ from random import randn, rand, seed
 from algorithm.functional import vectorize, parallelize
 from collections.list import List
 from python import Python, PythonObject
+import random
 
 alias type = DType.float32
 alias nelts = simd_width_of[Scalar[type]]()
@@ -18,13 +19,13 @@ struct LayoutTensor(Copyable, Movable, Writable):
     fn __init__(out self, shape: List[Int]):
         self.shape = shape.copy()
         self.strides = List[Int]()
-        
+
         # Compute strides for row-major (C-contiguous) layout
         var stride = 1
         for i in range(shape.__len__() - 1, -1, -1):
             self.strides.append(stride)
             stride *= shape[i]
-        
+
         # Reverse strides to match shape order
         var reversed_strides = List[Int]()
         for i in range(self.strides.__len__() - 1, -1, -1):
@@ -56,7 +57,7 @@ struct LayoutTensor(Copyable, Movable, Writable):
         for shape in self.shape:
             total *= shape
         return total
-    
+
     @always_inline("nodebug")
     fn write_to[W: Writer](self, mut writer: W):
         writer.write("Shape: ")
@@ -110,9 +111,7 @@ struct Tensor[Type: DType](Copyable, ImplicitlyCopyable, Movable):
         self.layout = layout.copy()
         self.size = self.layout.size()
 
-    fn __init__(
-        out self, data: UnsafePointer[Scalar[Type]], shape: (Int, Int)
-    ):
+    fn __init__(out self, data: UnsafePointer[Scalar[Type]], shape: (Int, Int)):
         self.data = data
         self.layout = LayoutTensor(shape)
         self.size = self.layout.size()
@@ -373,6 +372,7 @@ struct Tensor[Type: DType](Copyable, ImplicitlyCopyable, Movable):
         """
         Transpose a 2D tensor (matrix) - swaps rows and columns.
         Shape [m, n] becomes [n, m].
+        Returns a row-major (C-contiguous) tensor.
         """
         if self.layout.shape.__len__() != 2:
             print("Transpose only supported for 2D tensors")
@@ -384,7 +384,12 @@ struct Tensor[Type: DType](Copyable, ImplicitlyCopyable, Movable):
 
         for i in range(m):
             for j in range(n):
-                new_tensor[j, i] = self[i, j]
+                new_tensor.data.store(
+                    j * m + i,
+                    self.data.load(
+                        i * self.layout.strides[0] + j * self.layout.strides[1]
+                    ),
+                )
 
         return new_tensor^
 
@@ -392,6 +397,7 @@ struct Tensor[Type: DType](Copyable, ImplicitlyCopyable, Movable):
         """
         Transpose arbitrary axes in an N-dimensional tensor.
         Swaps the dimensions at axis1 and axis2.
+        Returns a row-major (C-contiguous) tensor.
         """
         if (
             axis1 < 0
@@ -414,33 +420,43 @@ struct Tensor[Type: DType](Copyable, ImplicitlyCopyable, Movable):
 
         var new_tensor = Tensor[Type](new_shape)
 
-        # Copy data with transposed indexing
+        # Create index arrays for iteration
         var old_indices = List[Int]()
         for _ in range(self.layout.shape.__len__()):
             old_indices.append(0)
 
-        for flat_idx in range(self.size):
-            # Convert flat index to multi-dimensional index
-            var idx = flat_idx
-            for i in range(self.layout.shape.__len__() - 1, -1, -1):
-                old_indices[i] = idx % self.layout.shape[i]
-                idx /= self.layout.shape[i]
+        var new_indices = List[Int]()
+        for _ in range(new_shape.__len__()):
+            new_indices.append(0)
 
-            # Swap axes
-            var temp = old_indices[axis1]
-            old_indices[axis1] = old_indices[axis2]
-            old_indices[axis2] = temp
+        # Copy data with proper transposition to row-major layout
+        for new_flat_idx in range(new_tensor.size):
+            # Convert new flat index to multi-dimensional indices
+            var idx = new_flat_idx
+            for i in range(new_shape.__len__() - 1, -1, -1):
+                new_indices[i] = idx % new_shape[i]
+                idx /= new_shape[i]
 
-            # Calculate new flat index and copy
-            var new_flat_idx = 0
-            var stride = 1
-            for i in range(new_tensor.layout.shape.__len__() - 1, -1, -1):
-                new_flat_idx += old_indices[i] * stride
-                stride *= new_tensor.layout.shape[i]
+            # Map new indices back to old indices (inverse transpose)
+            for i in range(old_indices.__len__()):
+                if i == axis1:
+                    old_indices[i] = new_indices[axis2]
+                elif i == axis2:
+                    old_indices[i] = new_indices[axis1]
+                else:
+                    old_indices[i] = new_indices[i]
 
-            new_tensor.data.store(new_flat_idx, self.data.load(flat_idx))
+            # Calculate old flat index using old strides
+            var old_flat_idx = 0
+            for i in range(old_indices.__len__()):
+                old_flat_idx += old_indices[i] * self.layout.strides[i]
+
+            new_tensor.data.store(new_flat_idx, self.data.load(old_flat_idx))
 
         return new_tensor^
+
+    fn rand(mut self):
+        random.rand(self.data, self.layout.size())
 
     fn scalar(self) -> Scalar[Type]:
         """Return the scalar value of a scalar tensor."""

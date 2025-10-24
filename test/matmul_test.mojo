@@ -9,8 +9,8 @@ fn test_1d_x_1d_dot_product(
     print("\nTest 1: 1D x 1D (dot product)")
 
     # Mojo implementation
-    var a = Tensor(3)
-    var b = Tensor(3)
+    var a = Tensor[DType.float32](3)
+    var b = Tensor[DType.float32](3)
     a[0] = 1.0
     a[1] = 2.0
     a[2] = 3.0
@@ -32,7 +32,7 @@ fn test_1d_x_1d_dot_product(
     for i in range(torch_result.shape.__len__()):
         expected_shape.append(Int(torch_result.shape[i]))
     results.assert_shape_equal(
-        result.shape, expected_shape, "1D x 1D shape (scalar in tensor)"
+        result.layout.shape, expected_shape, "1D x 1D shape (scalar in tensor)"
     )
     results.assert_equal(
         result[0], Float32(torch_result.item()), "1D x 1D value"
@@ -45,8 +45,8 @@ fn test_2d_x_2d_matrix_multiply(
     print("\nTest 2: 2D x 2D (matrix multiplication)")
 
     # Mojo implementation
-    var c = Tensor(2, 3)
-    var d = Tensor(3, 2)
+    var c = Tensor[DType.float32]([2, 3])
+    var d = Tensor[DType.float32]([3, 2])
 
     # Fill c with values [[1, 2, 3], [4, 5, 6]]
     c[0, 0] = 1.0
@@ -82,7 +82,9 @@ fn test_2d_x_2d_matrix_multiply(
     var expected_shape = List[Int]()
     for i in range(torch_result.shape.__len__()):
         expected_shape.append(Int(torch_result.shape[i]))
-    results.assert_shape_equal(result.shape, expected_shape, "2D x 2D shape")
+    results.assert_shape_equal(
+        result.layout.shape, expected_shape, "2D x 2D shape"
+    )
     results.assert_equal(
         result[0, 0], Float32(torch_result[0, 0].item()), "2D x 2D [0,0]"
     )
@@ -97,18 +99,78 @@ fn test_2d_x_2d_matrix_multiply(
     )
 
 
+fn test_2d_x_2dT_matrix_multiply(
+    mut results: TensorTestResults, tiled: Bool = False
+) raises:
+    print("\nTest 2: 2D x 2D^T (matrix multiplication)")
+
+    # Mojo implementation
+    var c = Tensor[DType.float32]([2, 3])
+    var d = Tensor[DType.float32]([2, 3])
+
+    # Fill c with values [[1, 2, 3], [4, 5, 6]]
+    c[0, 0] = 1.0
+    c[0, 1] = 2.0
+    c[0, 2] = 3.0
+    c[1, 0] = 4.0
+    c[1, 1] = 5.0
+    c[1, 2] = 6.0
+
+    # Fill d with values [[7, 8], [9, 10], [11, 12]]
+    d[0, 0] = 7.0
+    d[0, 1] = 8.0
+    d[0, 2] = 9.0
+    d[1, 0] = 10.0
+    d[1, 1] = 11.0
+    d[1, 2] = 12.0
+
+    var result = matmul(c, d.transpose(0, 1), tiled)
+
+    # PyTorch reference
+    var torch = Python.import_module("torch")
+    var init_c = Python.list(
+        Python.list(1.0, 2.0, 3.0), Python.list(4.0, 5.0, 6.0)
+    )
+    var init_d = Python.list(
+        Python.list(7.0, 8.0, 9.0), Python.list(10.0, 11.0, 12.0)
+    )
+    var torch_c = torch.tensor(init_c)
+    var torch_d = torch.tensor(init_d)
+    var torch_result = torch.matmul(torch_c, torch_d.transpose(0, 1))
+
+    # Assertions
+    var expected_shape = List[Int]()
+    for i in range(torch_result.shape.__len__()):
+        expected_shape.append(Int(torch_result.shape[i]))
+    results.assert_shape_equal(
+        result.layout.shape, expected_shape, "2D x 2D^T shape"
+    )
+    results.assert_equal(
+        result[0, 0], Float32(torch_result[0, 0].item()), "2D x 2D^T [0,0]"
+    )
+    results.assert_equal(
+        result[0, 1], Float32(torch_result[0, 1].item()), "2D x 2D^T [0,1]"
+    )
+    results.assert_equal(
+        result[1, 0], Float32(torch_result[1, 0].item()), "2D x 2D^T [1,0]"
+    )
+    results.assert_equal(
+        result[1, 1], Float32(torch_result[1, 1].item()), "2D x 2D^T [1,1]"
+    )
+
+
 fn test_1d_x_2d_broadcast(
     mut results: TensorTestResults, tiled: Bool = False
 ) raises:
     print("\nTest 3: 1D x 2D (broadcast)")
 
     # Mojo implementation
-    var e = Tensor(3)
+    var e = Tensor[DType.float32](3)
     e[0] = 1.0
     e[1] = 2.0
     e[2] = 3.0
 
-    var d = Tensor(3, 2)
+    var d = Tensor[DType.float32]([3, 2])
     d[0, 0] = 7.0
     d[0, 1] = 8.0
     d[1, 0] = 9.0
@@ -131,7 +193,9 @@ fn test_1d_x_2d_broadcast(
     var expected_shape = List[Int]()
     for i in range(torch_result.shape.__len__()):
         expected_shape.append(Int(torch_result.shape[i]))
-    results.assert_shape_equal(result.shape, expected_shape, "1D x 2D shape")
+    results.assert_shape_equal(
+        result.layout.shape, expected_shape, "1D x 2D shape"
+    )
     results.assert_equal(
         result[0], Float32(torch_result[0].item()), "1D x 2D [0]"
     )
@@ -146,7 +210,7 @@ fn test_2d_x_1d_matvec(
     print("\nTest 4: 2D x 1D (matrix-vector)")
 
     # Mojo implementation
-    var c = Tensor(2, 3)
+    var c = Tensor[DType.float32]([2, 3])
     c[0, 0] = 1.0
     c[0, 1] = 2.0
     c[0, 2] = 3.0
@@ -154,7 +218,7 @@ fn test_2d_x_1d_matvec(
     c[1, 1] = 5.0
     c[1, 2] = 6.0
 
-    var f = Tensor(3)
+    var f = Tensor[DType.float32]([3])
     f[0] = 1.0
     f[1] = 2.0
     f[2] = 3.0
@@ -174,7 +238,9 @@ fn test_2d_x_1d_matvec(
     var expected_shape = List[Int]()
     for i in range(torch_result.shape.__len__()):
         expected_shape.append(Int(torch_result.shape[i]))
-    results.assert_shape_equal(result.shape, expected_shape, "2D x 1D shape")
+    results.assert_shape_equal(
+        result.layout.shape, expected_shape, "2D x 1D shape"
+    )
     results.assert_equal(
         result[0], Float32(torch_result[0].item()), "2D x 1D [0]"
     )
@@ -189,8 +255,8 @@ fn test_3d_x_2d_batched(
     print("\nTest 5: 3D x 2D (batched)")
 
     # Mojo implementation
-    var g = Tensor(2, 3, 4)
-    var h = Tensor(4, 2)
+    var g = Tensor[DType.float32]([2, 3, 4])
+    var h = Tensor[DType.float32]([4, 2])
 
     # Fill tensors
     for i in range(2):
@@ -224,7 +290,9 @@ fn test_3d_x_2d_batched(
     var expected_shape = List[Int]()
     for i in range(torch_result.shape.__len__()):
         expected_shape.append(Int(torch_result.shape[i]))
-    results.assert_shape_equal(result.shape, expected_shape, "3D x 2D shape")
+    results.assert_shape_equal(
+        result.layout.shape, expected_shape, "3D x 2D shape"
+    )
     results.assert_equal(
         result[0, 0, 0],
         Float32(torch_result[0, 0, 0].item()),
@@ -263,34 +331,10 @@ fn matmul_test() raises:
     # Run all tests
     test_1d_x_1d_dot_product(results)
     test_2d_x_2d_matrix_multiply(results)
+    test_2d_x_2dT_matrix_multiply(results)
     test_1d_x_2d_broadcast(results)
     test_2d_x_1d_matvec(results)
     test_3d_x_2d_batched(results)
-
-    # Print final results
-    results.print_summary()
-
-    # Raise an error if any tests failed
-    if results.failed > 0:
-        raise Error(
-            "Test suite failed: "
-            + String(results.failed)
-            + " out of "
-            + String(results.total)
-            + " tests failed"
-        )
-
-
-fn tiled_matmul_test() raises:
-    var results = TensorTestResults()
-
-    # TODO: Currently unpacking of **kwargs is not supported, so we pass tiled=True explicitly to every matmul call
-    # Run all tests
-    test_1d_x_1d_dot_product(results, tiled=True)
-    test_2d_x_2d_matrix_multiply(results, tiled=True)
-    test_1d_x_2d_broadcast(results, tiled=True)
-    test_2d_x_1d_matvec(results, tiled=True)
-    test_3d_x_2d_batched(results, tiled=True)
 
     # Print final results
     results.print_summary()
