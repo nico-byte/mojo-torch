@@ -174,7 +174,53 @@ def benchmark_numpy() -> Tuple[List[Int], List[Int]]:
         mean_flops.append(gflops(size, avg_time))
         max_flops.append(gflops(size, min_time))
 
-    return mean_flops, max_flops
+    return mean_flops.copy(), max_flops.copy()
+
+
+def benchmark_torch(var dvc: String) -> Tuple[List[Int], List[Int]]:
+    print("Benchmarking torch")
+    var torch = Python.import_module("torch")
+    var device = torch.device(Python.str(dvc))
+    var mean_flops = List[Int](capacity=NUMPTS)
+    var max_flops = List[Int](capacity=NUMPTS)
+
+    for _ in range(WARMUP):
+        var A = torch.randn(MAX_SIZE, MAX_SIZE).to(torch.float32)
+        var B = torch.randn(MAX_SIZE, MAX_SIZE).to(torch.float32)
+        var C = torch.matmul(A, B)
+
+    @parameter
+    for size in range(
+        MIN_SIZE, MAX_SIZE, (MAX_SIZE - MIN_SIZE) // (NUMPTS - 1)
+    ):
+        var avg_time = Float64(0.0)
+        var min_time = Float64.MAX
+
+        for _ in range(NUM_ITER):
+            var A = torch.randn(size, size).to(torch.float32)
+            var B = torch.randn(size, size).to(torch.float32)
+            var start = time.perf_counter()
+            var C = torch.matmul(A, B)
+            var end = time.perf_counter()
+            var exec_time = end - start
+            min_time = min(min_time, exec_time)
+            avg_time += exec_time
+
+        avg_time /= NUM_ITER
+
+        print(
+            "Size:",
+            size,
+            "Peak:",
+            gflops(size, min_time),
+            "Mean:",
+            gflops(size, avg_time),
+        )
+
+        mean_flops.append(gflops(size, avg_time))
+        max_flops.append(gflops(size, min_time))
+
+    return mean_flops.copy(), max_flops.copy()
 
 
 def main():
@@ -207,6 +253,20 @@ def main():
         to_python_list(numpy_flops[1]),
          "-*", 
         label="numpy(OpenBLAS) Peak",
+    )
+
+    torch_flops = benchmark_torch("cpu")
+    plt.plot(
+        sizes,
+        to_python_list(torch_flops[0]),
+         "-*", 
+        label="torch(CPU) Mean",
+    )
+    plt.plot(
+        sizes,
+        to_python_list(torch_flops[1]),
+         "-*", 
+        label="torch(CPU) Peak",
     )
 
     fig_ax[1].set_xlabel("Matrix Size")

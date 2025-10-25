@@ -755,10 +755,10 @@ fn micro_kernel[
 fn matmul_params[Type: DType]() -> IndexList[5]:
     alias mc = 8192 // size_of[Type]()  # fix this for simplicity
     alias N = simd_width_of[Type]()
-    alias L1_ASSOCIATIVITY = 12
-    alias L1_CACHE_SIZE = 192 * 1024
-    alias L2_ASSOCIATIVITY = 16
-    alias L2_CACHE_SIZE = 12 * 1024 * 1024
+    alias L1_ASSOCIATIVITY = 8
+    alias L1_CACHE_SIZE = 32 * 1024
+    alias L2_ASSOCIATIVITY = 8
+    alias L2_CACHE_SIZE = 512 * 1024
 
     alias Vectors = 32 if CompilationTarget.has_avx512f() else 16
 

@@ -36,11 +36,11 @@ struct LayoutTensor(Copyable, Movable, Writable):
         self.shape = shape.copy()
         self.strides = strides.copy()
 
-    fn __init__(out self, shape: (Int, Int), strides: (Int, Int)):
+    fn __init__(out self, shape: Tuple[Int, Int], strides: Tuple[Int, Int]):
         self.shape = List[Int](shape[0], shape[1])
         self.strides = List[Int](strides[0], strides[1])
 
-    fn __init__(out self, shape: (Int, Int)):
+    fn __init__(out self, shape: Tuple[Int, Int]):
         self.strides = List[Int](shape[1], 1)
         self.shape = List[Int](shape[0], shape[1])
 
@@ -82,12 +82,14 @@ struct Tensor[Type: DType](Copyable, ImplicitlyCopyable, Movable):
         self.layout = LayoutTensor(dims)
         self.size = self.layout.size()
         self.data = UnsafePointer[Scalar[Type]].alloc(self.size)
+        memset_zero(self.data, self.size)
 
     fn __init__(out self, *dims: Int):
         shape = [dim for dim in dims]
         self.layout = LayoutTensor(shape)
         self.size = self.layout.size()
         self.data = UnsafePointer[Scalar[Type]].alloc(self.size)
+        memset_zero(self.data, self.size)
 
     fn __init__(out self, dims: List[Int], default_value: Scalar[Type]):
         self.layout = LayoutTensor(dims)
@@ -111,7 +113,7 @@ struct Tensor[Type: DType](Copyable, ImplicitlyCopyable, Movable):
         self.layout = layout.copy()
         self.size = self.layout.size()
 
-    fn __init__(out self, data: UnsafePointer[Scalar[Type]], shape: (Int, Int)):
+    fn __init__(out self, data: UnsafePointer[Scalar[Type]], shape: Tuple[Int, Int]):
         self.data = data
         self.layout = LayoutTensor(shape)
         self.size = self.layout.size()

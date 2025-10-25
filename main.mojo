@@ -108,14 +108,14 @@ fn main() raises:
     )
     print()
 
-    # linear_layer = nn.Linear(512, 256, True)
-    # var input = Tensor(12, 512)  # Batch size of 12
-    # var output = linear_layer.forward(input)
-    # var grads = linear_layer.backward(input, output, 0.01)
-    # print(
-    #    "Output shape from Linear layer: [",
-    #    output.shape[0],
-    #    ", ",
-    #    output.shape[1],
-    #    "]",
-    # )
+    linear_layer = nn.Linear[DType.float32](512, 256, True)
+    var input = Tensor[DType.float32](12, 512)  # Batch size of 12
+    var output = linear_layer.forward(input)
+    var grads = linear_layer.backward(input, output, 0.01)
+    print(
+       "Output shape from Linear layer: [",
+       output.layout.shape[0],
+       ", ",
+       output.layout.shape[1],
+       "]",
+    )
