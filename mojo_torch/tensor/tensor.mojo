@@ -5,7 +5,7 @@ from memory import memset_zero, stack_allocation
 from random import randn, rand, seed
 from algorithm.functional import vectorize, parallelize
 from collections.list import List
-from python import Python, PythonObject
+from python import Python, PythonObject, ConvertibleFromPython
 import random
 
 alias type = DType.float32
